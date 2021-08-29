@@ -171,7 +171,7 @@ T아카데미 Jenkins를 활용한 CI/CD 강의 정리
   - 여러 작업들을 실행가능
   - 플러그인을 깔면 사용할 수 있는 스텝들이 생겨남
 
-# 젠킨스 설치하기 
+##  젠킨스 설치하기 
 
 ```shell
 yum update -y
@@ -185,4 +185,84 @@ sudo yum install -y java-1.8.0-openjdk jenkins git docker
 alternatives --config java
 service jenkins start
 ```
+
+# 개발 환경 및 CI/CD 동작 이해 
+
+## 개발 환경의 종류에는 무엇이 있을까?
+- 개발자가 개발을 하는 Local 환경(자신의 workspace 안에서 일을함)
+- 개발자들끼리 개발 내용에 대한 통합 테스트를 하는 Development 환경
+- 개발이 끝나고 QA 엔지니어 및 내부 사용자들이 사용해 보기 위한 QA 환경
+- 실제 유저가 사용하는 Production 환경
+- 쉽게 DEV, QA, PROD 환경으로 부르자!
+
+## 개발 프로세스
+1. 개발자가 자신의 PC 에서 개발을 진행한다.
+2. 다른 개발자가 작성한 코드와 차이가 발생하지 않는지 내부 테스트를 진행한다.
+3. 진행한 내용을 다른 개발자들과 공유하기 위해 git 과 같은 SCM에 올린다.
+   => 흔히 dev 브랜치
+4. Dev브랜치의 내용을 개발 환경에 배포하기 전에 테스트와 Lint 등 코드 포맷팅을
+   한다.
+5. 배포하기 위한 빌드과정을 거친다.
+6. 코드를 배포한다.
+7. 테스트를 진행한다.
+8. 위 모든 과정을 DEV, QA, PROD 환경에서 모두 하고 각각에 맞는 환경에 배포한다
+
+## 여러 배포 환경의 관리
+여러 배포환경의 관리에서 핵심은
+
+* `### 인프라를 모듈화 하여 어떤것이 변수인지 잘 설정하고 이를 잘 설계하는것!`
+가령 APP_ENV 처럼 현재 배포하고자 하는 것이 무슨 환경인지 설정하고
+앱 내에서 사용하는 다양한 변수들을 APP_ENV 에 맞게 잘 가져다 쓰는것이 핵심.
+
+서비스 내부의 변수 뿐만 아니라 클라우드 리소스를 많이 활용해서 개발하는 요
+즘에는 클라우드 리소스 내에서 인프라별 키관리가 매우 중요해서 aws system
+manager 의 parameter store 와 같은 키 관리 서비스를 쓰는것을 강추!
+
+
+## 예시 배포 환경
+1. 웹사이트 코드를 작성한다.
+2. 웹사이트 코드를 린트, 웹팩 빌드 해서 AWS S3 bucket 에 html 파일을 업로드 한다
+3. Node.js 백엔드 코드를 typescript 작성한다.
+4. 위 코드를 javascript compile 하고, 테스트 코드를 돌려서 도커 이미지를 만들어 ECR 에 올린다.
+5. 업로드한 ECR 이미지로 ECS 서비스를 재시작한다(rolling deploy) =>
+   continouse deploy
+
+## AWS 리소스 간단 리뷰 – S3
+- Simple Storage Service 의 약자로 그냥 클라우드 스토리지
+- 정적 웹사이트 코드배포에 용이
+- 정적 웹사이트 호스팅에 필요한 다양한 기능 제공
+- AWS Cloudfront와 함께 사용해서 최적화 가능하고 DNS 관리도 가능
+
+## ECR
+- Elastic Container Registry
+- 도커 이미지를 저장하는 프라이빗 레포지토리
+- 실제 프로덕션 환경에서는 container 기반의 배포(ECS 등을 활용) 할 것이기 때문에 반드시 repository 가 있어야 함
+
+
+## AWS 리소스 간단 리뷰 – ECS
+- Elastic Container Service
+- 도커 컨테이너 기반으로 서비스 운용을 가능하게 해주는 간단한 서비스
+- `무중단 배포(rolling update)를 제공하며 scale up 이 가능한 특징`
+- `백엔드 서비스를 스케일업 가능한 형태로 배포하는데 최적화`
+- 수많은 도커 컨테이너 서버를 띄우고 LB 가 이들 사이에 밸런싱을 해줌.
+- fargate, ec2 모드가 있어서 docker container 리소스만 띄우거나 혹은 물리적인 EC2 instance 클러스터로 구성 가능)
+
+* => ECS 혹은 k8s 등을 통해 rolling deploy가 처리되기 때문에 jenkins 의 역할은 배포 명령만 내려주면 된다!
+  * Ex) aws ecs update-service ‘서비스 이름
+
+### 개발환경 예시 1
+* 예시는 예시일뿐, 회사(기업)마다 환경이 다르다. 
+
+* ![](img/b26e0b85.png)
+* ![](img/cecb19a5.png)
+
+
+
+
+
+
+
+
+
+
 
