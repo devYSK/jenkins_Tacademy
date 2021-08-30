@@ -257,12 +257,231 @@ manager 의 parameter store 와 같은 키 관리 서비스를 쓰는것을 강�
 * ![](img/cecb19a5.png)
 
 
+### 젠킨스 설치
+
+Mac 에서 Jenkins 설치하기
+Brew를 통해 젠킨스 설치
+brew를 통해 젠킨스를 설치하면 아주 쉽게 설치할 수 있습니다. 아래 명령어를 통해 젠킨스를 설치합니다.
+
+```shell
+$ brew install jenkins
+```
+젠킨스를 설치한다음 아래의 명령어로 젠킨스를 제어할 수 있습니다. start 명령어를 통해 젠킨스를 실행합니다.
+```shell
+$ brew services start jenkins // 젠킨스 시작
+$ brew services stop jenkins // 젠킨스 종료
+$ brew services restart jenkins //젠킨스 재시작
+```
+
+* 설치 에러시 : https://stackoverflow.com/questions/68806741/how-to-fix-yum-update-of-jenkins
+
+* 설치 과정 : http://blog.illunex.com/201207-2/
+
+* 젠킨스에서 깃을 관리하게 해야한다
+  * Credential 관리
+  * jenkins 사이트에서 jenkins 관리 -> Security(Configure Global Security )
+
+## 젠킨스한테 깃 권한주는법
+
+1. profile -> settings -> devloper settings 접속 
+2. personal access tokens 접속 
+3. generate new token 클릭 
+4. 원하는 권한 체크 후 generate token 클릭 
+5. 그 후 add credentials에서 password에 토큰값을 준다 
+
+* username : 깃허브 아이디
+* password : 토큰
+* id : 젠킨스에서 깃에 접근하기 위한 id를 부여. 임의로 적어도 된다. 
+
+* ![](img/4ea364ba.png)
+
+```
+pipeline { // 파이프라인의 시작
+    // 스테이지 별로 다른 거
+    agent any // 어떤 노드를 쓴것인가. 여기서는 1개니까 any(아무거나)
+
+    triggers {
+        pollSCM('*/3 * * * *') // 몇분주기로 파이프라인을 구동 - 3분주기
+    }
+
+    environment { // 파이프라인안에서 쓸 환경변수 젠킨스 사이트 안에서 등록한 깃 토큰 이외에도 등록 필요.
+      AWS_ACCESS_KEY_ID = credentials('awsAccessKeyId')
+      AWS_SECRET_ACCESS_KEY = credentials('awsSecretAccessKey')
+      AWS_DEFAULT_REGION = 'ap-northeast-2'
+      HOME = '.' // Avoid npm root owned
+    }
+
+    stages { // 각 스테이지들 순서.
+        // 레포지토리를 다운로드 받음
+        stage('Prepare') {
+            agent any
+            
+            steps {
+                echo 'Clonning Repository'
+
+                git url: 'https://github.com/devYSK/jenkins_aws.git', // 내 git url
+                    branch: 'master',
+                    credentialsId: 'gittest' // 젠킨스에서 등록한 git id
+            }
+
+            post {
+                // If Maven was able to run the tests, even if some of the test
+                // failed, record the test results and archive the jar file.
+                success {
+                    echo 'Successfully Cloned Repository'
+                }
+
+                always {
+                  echo "i tried..."
+                }
+
+                cleanup {
+                  echo "after all other post condition"
+                }
+            }
+        }
+        
+        // aws s3 에 파일을 올림
+        stage('Deploy Frontend') {
+          steps {
+            echo 'Deploying Frontend'
+            // 프론트엔드 디렉토리의 정적파일들을 S3 에 올림, 이 전에 반드시 EC2 instance profile 을 등록해야함.
+            dir ('./website'){
+                sh '''
+                aws s3 sync ./ s3://ysjenkinstest
+                '''
+                // 만든 s3의 이름
+            }
+          }
+
+          post {
+              // If Maven was able to run the tests, even if some of the test
+              // failed, record the test results and archive the jar file.
+              success {
+                  echo 'Successfully Cloned Repository'
+
+                  // 성공시 메일로 메일을 보내준다 메일서버를 붙여서.
+                  mail  to: 'kim206gh@naver.com',
+                        subject: "Deploy Frontend Success",
+                        body: "Successfully deployed frontend!"
+
+              }
+
+              failure {
+                  echo 'I failed :('
+                    // 실패시 메일을 보낸다 메일서버를 붙여서.
+                  mail  to: 'kim206gh@naver.com',
+                        subject: "Failed Pipelinee",
+                        body: "Something is wrong with deploy frontend"
+              }
+          }
+        }
+        
+        stage('Lint Backend') {
+            // Docker plugin and Docker Pipeline 두개를 깔아야 사용가능!
+            agent {
+              docker {
+                image 'node:latest'
+              }
+            }
+            
+            steps {
+              dir ('./server'){
+                  sh '''
+                  npm install&&
+                  npm run lint
+                  '''
+              }
+            }
+        }
+        
+        stage('Test Backend') {
+          agent {
+            docker {
+              image 'node:latest'
+            }
+          }
+          steps {
+            echo 'Test Backend'
+
+            dir ('./server'){
+                sh '''
+                npm install
+                npm run test
+                '''
+            }
+          }
+        }
+        
+        stage('Bulid Backend') {
+          agent any
+          steps {
+            echo 'Build Backend'
+
+            dir ('./server'){
+                sh """
+                docker build . -t server --build-arg env=${PROD}
+                """
+            }
+          }
+
+          post {
+            failure {
+              error 'This pipeline stops here...'
+            }
+          }
+        }
+        
+        stage('Deploy Backend') {
+          agent any
+
+          steps {
+            echo 'Build Backend'
+
+            dir ('./server'){
+                sh '''
+                docker rm -f $(docker ps -aq)
+                docker run -p 80:80 -d server
+                '''
+            }
+          }
+
+          post {
+            success {
+              mail  to: 'frontalnh@gmail.com',
+                    subject: "Deploy Success",
+                    body: "Successfully deployed!"
+                  
+            }
+          }
+        }
+    }
+}
+
+```
+
+
+* 젠킨스 사이트 젠킨스 관리 -> 젠킨스 설정 아래로 내리다 보면 extended e-mail notification 설정이 있다. 여기서 메일서버 설정을 할 수 있다.  
+
+* ![](img/1c8df3bf.png)
+
+
+* 도커에서 젠킨스 쓸 수 있게하는법
+```shell
+
+sudo usermod -aG docker $USER
+sudo usermod -aG docker jenkins
+```
 
 
 
-
-
-
-
+* Q: 젠킨스 파이프 라인의 각 스테이지는 병렬로 처리되나요?
+* A: 젠킨스 파이프라인은 기본적으로 직렬로 처리되지만 개발자가
+병렬로 처리가 필요하다고 생각되는 경우 병렬로 처리하도록 할 수 있습니다.
+예를 들어 여러 젠킨스 노드가 있다면 각 노드에게 서로 다른 일을 시켜 일을 분산
+시킬 수 있습니다.
+* 
+* Q: 바스천이 있는 환경에서 Jenkins 를 어떻게 활용하나요?
+* A: 바스천을 통해 proxy ssh 를 활용해서 접근할 수 있습니다
 
 
